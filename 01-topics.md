@@ -1,14 +1,14 @@
 # Using Django
 Introductions to all the key parts of Django you’ll need to know:
 
-- How to install Django
-  - Install Python
-  - Install Apache and mod_wsgi
-  - Get your database running
-  - Install the Django code
-- Models and databases
-  - Models
-  - Making queries
+- [How to install Django](/topics/02-install.md)
+  - [Install Python](/topics/02-install.md#install-python)
+  - [Install Apache and mod_wsgi](/topics/02-install.md#install-apache-and-mod_wsgi)
+  - [Get your database running](/topics/02-install.md#get-your-database-running)
+  - [Install the Django code](/topics/02-install.md#get-your-database-running)
+- [Models and databases](/topics/03-db.md)
+  - [Models](/topics/db/04-models.md)
+  - [Making queries](/topics/db/05-queries.md)
   - Aggregation
   - Search
   - Managers
