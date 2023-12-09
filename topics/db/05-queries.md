@@ -164,3 +164,5 @@ With the default manager class, it is the same as:
 ```python
 Entry.objects.all().filter(pub_date__year=2006)
 ```
+
+#### Chaining filters
