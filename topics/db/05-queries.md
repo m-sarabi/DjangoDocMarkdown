@@ -168,3 +168,9 @@ Entry.objects.all().filter(pub_date__year=2006)
 #### Chaining filters
 
 The result of refining a `QuerySet` is itself a `QuerySet`, so it’s possible to chain refinements together. For example:
+
+```pycon
+>>> Entry.objects.filter(headline__startswith="What").exclude(
+...     pub_date__gte=datetime.date.today()
+... ).filter(pub_date__gte=datetime.date(2005, 1, 30))
+```
