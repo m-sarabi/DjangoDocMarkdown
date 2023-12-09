@@ -1,4 +1,4 @@
-# Django Documentation Markdown Repository
+# Django Documentation in Markdown
 
 > ## **This is a work in progress...**
 
