@@ -166,3 +166,5 @@ Entry.objects.all().filter(pub_date__year=2006)
 ```
 
 #### Chaining filters
+
+The result of refining a `QuerySet` is itself a `QuerySet`, so it’s possible to chain refinements together. For example:
