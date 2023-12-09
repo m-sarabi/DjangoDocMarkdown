@@ -1444,3 +1444,17 @@ Entry.objects.filter(blog=5)  # Query using id directly
 If you find yourself needing to write an SQL query that is too complex for Django’s database-mapper to handle, you can fall back on writing SQL by hand. Django has a couple of options for writing raw SQL queries; see Performing raw SQL queries.
 
 Finally, it’s important to note that the Django database layer is merely an interface to your database. You can access your database via other tools, programming languages or database frameworks; there’s nothing Django-specific about your database.
+
+---
+<table>
+  <tr>
+    <td width=1000 align=left>
+    <a href="/topics/db/04-models.md">◄ Models</a>
+    </td>
+    <td width=1000 align=right>
+    <a href="">Aggregation ►</a>
+    </td>
+  </tr>
+</table>
+
+---

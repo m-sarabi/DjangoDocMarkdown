@@ -168,3 +168,17 @@ Introductions to all the key parts of Django you’ll need to know:
   - Async views
   - Async safety
   - Async adapter functions
+
+---
+<table>
+  <tr>
+    <td width=2000 align=left>
+    <a href="/README.md">◄ Django Documentation in Markdown</a>
+    </td>
+    <td width=2000 align=right>
+    <a href="/topics/02-install.md">How to install Django ►</a>
+    </td>
+  </tr>
+</table>
+
+---

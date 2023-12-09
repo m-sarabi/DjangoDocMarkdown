@@ -100,3 +100,17 @@ If you’d like to be able to update your Django code occasionally with the late
    This will make Django’s code importable, and will also make the `django-admin` utility command available. In other words, you’re all set!
 
 When you want to update your copy of the Django source code, run the command `git pull` from within the `django` directory. When you do this, Git will download any changes.
+
+---
+<table>
+  <tr>
+    <td width=2000 align=left>
+    <a href="/01-topics.md">◄ Using Django</a>
+    </td>
+    <td width=2000 align=right>
+    <a href="/topics/03-db.md">Models and databases ►</a>
+    </td>
+  </tr>
+</table>
+
+---

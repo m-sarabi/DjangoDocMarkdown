@@ -1151,3 +1151,17 @@ Explicitly importing each model rather than using `from .models import *` has th
 > 
 > The Models Reference
 > Covers all the model related APIs including model fields, related objects, and `QuerySet`.
+
+---
+<table>
+  <tr>
+    <td width=1000 align=left>
+    <a href="/topics/03-db.md">◄ Models and databases</a>
+    </td>
+    <td width=1000 align=right>
+    <a href="/topics/db/05-queries.md">Making queries ►</a>
+    </td>
+  </tr>
+</table>
+
+---

@@ -3,7 +3,14 @@
 > ## **This is a work in progress...**
 
 This repository serves as a convenient resource for easily copying and pasting Django documentation content and style in Markdown format.
+
 It's primarily intended for personal or educational purposes, such as creating study guides or summarizing key concepts.
+
+Currently only the **topics** section of the documentation v5.0 is planned to be added.
+
+## Where to Start
+
+- **[Using Django](/01-topics.md)**
 
 ## About This Repository
 
@@ -28,3 +35,15 @@ The Django documentation team for their extensive and comprehensive work in crea
 ## Happy Learning!
 
 I hope this repository serves as a valuable resource for your Django learning endeavors.
+
+---
+<table>
+  <tr>
+    <td width=2000 align=left></td>
+    <td width=2000 align=right>
+    <a href="/01-topics.md">Using Django ►</a>
+    </td>
+  </tr>
+</table>
+
+---
