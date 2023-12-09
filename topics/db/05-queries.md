@@ -61,9 +61,9 @@ The `save()` method has no return value.
 
 > **See also**
 >
-> save() takes a number of advanced options not described here. See the documentation for save() for complete details.
+> `save()` takes a number of advanced options not described here. See the documentation for `save()` for complete details.
 >
-> To create and save an object in a single step, use the create() method.
+> To create and save an object in a single step, use the `create()` method.
 
 ---
 ## Saving changes to objects
