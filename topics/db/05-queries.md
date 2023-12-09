@@ -1452,7 +1452,7 @@ Finally, it’s important to note that the Django database layer is merely an in
     <a href="/topics/db/04-models.md">◄ Models</a>
     </td>
     <td width=1000 align=right>
-    <a href="">Aggregation ►</a>
+    <a href="#">Aggregation ►</a>
     </td>
   </tr>
 </table>
