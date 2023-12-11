@@ -507,7 +507,7 @@ Under the hood, the default argument is implemented by wrapping the aggregate fu
     <a href="/topics/db/05-queries.md">◄ Making queries</a>
     </td>
     <td width=1000 align=right>
-    <a href="#">Search ►</a>
+    <a href="/topics/db/07-search.md">Search ►</a>
     </td>
   </tr>
 </table>
