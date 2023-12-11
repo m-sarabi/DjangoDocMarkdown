@@ -270,3 +270,246 @@ Or ask for the average rating of all the books written by author(s) we have on f
 ---
 ## Aggregations and other `QuerySet` clauses
 
+### `filter()` and `exclude()`
+
+Aggregates can also participate in filters. Any `filter()` (or `exclude()`) applied to normal model fields will have the effect of constraining the objects that are considered for aggregation.
+
+When used with an `annotate()` clause, a filter has the effect of constraining the objects for which an annotation is calculated. For example, you can generate an annotated list of all books that have a title starting with “Django” using the query:
+
+```pycon
+>>> from django.db.models import Avg, Count
+>>> Book.objects.filter(name__startswith="Django").annotate(num_authors=Count("authors"))
+```
+
+When used with an `aggregate()` clause, a filter has the effect of constraining the objects over which the aggregate is calculated. For example, you can generate the average price of all books with a title that starts with “Django” using the query:
+
+```pycon
+>>> Book.objects.filter(name__startswith="Django").aggregate(Avg("price"))
+```
+
+#### Filtering on annotations
+
+Annotated values can also be filtered. The alias for the annotation can be used in `filter()` and `exclude()` clauses in the same way as any other model field.
+
+For example, to generate a list of books that have more than one author, you can issue the query:
+
+```pycon
+>>> Book.objects.annotate(num_authors=Count("authors")).filter(num_authors__gt=1)
+```
+
+This query generates an annotated result set, and then generates a filter based upon that annotation.
+
+If you need two annotations with two separate filters you can use the `filter` argument with any aggregate. For example, to generate a list of authors with a count of highly rated books:
+
+```pycon
+>>> highly_rated = Count("book", filter=Q(book__rating__gte=7))
+>>> Author.objects.annotate(num_books=Count("book"), highly_rated_books=highly_rated)
+```
+
+Each `Author` in the result set will have the `num_books` and `highly_rated_books` attributes. See also Conditional aggregation.
+
+> **Choosing between `filter` and `QuerySet.filter()`**
+> 
+> Avoid using the `filter` argument with a single annotation or aggregation. It’s more efficient to use `QuerySet.filter()` to exclude rows. The aggregation `filter` argument is only useful when using two or more aggregations over the same relations with different conditionals.
+
+---
+#### Order of `annotate()` and `filter()` clauses
+
+When developing a complex query that involves both `annotate()` and `filter()` clauses, pay particular attention to the order in which the clauses are applied to the `QuerySet`.
+
+When an `annotate()` clause is applied to a query, the annotation is computed over the state of the query up to the point where the annotation is requested. The practical implication of this is that `filter()` and `annotate()` are not commutative operations.
+
+Given:
+
+- Publisher A has two books with ratings 4 and 5.
+- Publisher B has two books with ratings 1 and 4.
+- Publisher C has one book with rating 1.
+
+Here’s an example with the `Count` aggregate:
+
+```pycon
+>>> a, b = Publisher.objects.annotate(num_books=Count("book", distinct=True)).filter(
+...     book__rating__gt=3.0
+... )
+>>> a, a.num_books
+(<Publisher: A>, 2)
+>>> b, b.num_books
+(<Publisher: B>, 2)
+
+>>> a, b = Publisher.objects.filter(book__rating__gt=3.0).annotate(num_books=Count("book"))
+>>> a, a.num_books
+(<Publisher: A>, 2)
+>>> b, b.num_books
+(<Publisher: B>, 1)
+```
+
+Both queries return a list of publishers that have at least one book with a rating exceeding 3.0, hence publisher C is excluded.
+
+In the first query, the annotation precedes the filter, so the filter has no effect on the annotation. distinct=True is required to avoid a query bug.
+
+The second query counts the number of books that have a rating exceeding 3.0 for each publisher. The filter precedes the annotation, so the filter constrains the objects considered when calculating the annotation.
+
+Here’s another example with the `Avg` aggregate:
+
+```pycon
+>>> a, b = Publisher.objects.annotate(avg_rating=Avg("book__rating")).filter(
+...     book__rating__gt=3.0
+... )
+>>> a, a.avg_rating
+(<Publisher: A>, 4.5)  # (5+4)/2
+>>> b, b.avg_rating
+(<Publisher: B>, 2.5)  # (1+4)/2
+
+>>> a, b = Publisher.objects.filter(book__rating__gt=3.0).annotate(
+...     avg_rating=Avg("book__rating")
+... )
+>>> a, a.avg_rating
+(<Publisher: A>, 4.5)  # (5+4)/2
+>>> b, b.avg_rating
+(<Publisher: B>, 4.0)  # 4/1 (book with rating 1 excluded)
+```
+
+The first query asks for the average rating of all a publisher’s books for publisher’s that have at least one book with a rating exceeding 3.0. The second query asks for the average of a publisher’s book’s ratings for only those ratings exceeding 3.0.
+
+It’s difficult to intuit how the ORM will translate complex querysets into SQL queries so when in doubt, inspect the SQL with `str(queryset.query)` and write plenty of tests.
+
+---
+### `order_by()`
+
+Annotations can be used as a basis for ordering. When you define an `order_by()` clause, the aggregates you provide can reference any alias defined as part of an `annotate()` clause in the query.
+
+For example, to order a `QuerySet` of books by the number of authors that have contributed to the book, you could use the following query:
+
+```pycon
+>>> Book.objects.annotate(num_authors=Count("authors")).order_by("num_authors")
+```
+
+---
+### values()
+
+Ordinarily, annotations are generated on a per-object basis - an annotated `QuerySet` will return one result for each object in the original `QuerySet`. However, when a `values()` clause is used to constrain the columns that are returned in the result set, the method for evaluating annotations is slightly different. Instead of returning an annotated result for each result in the original `QuerySet`, the original results are grouped according to the unique combinations of the fields specified in the `values()` clause. An annotation is then provided for each unique group; the annotation is computed over all members of the group.
+
+For example, consider an author query that attempts to find out the average rating of books written by each author:
+
+```pycon
+>>> Author.objects.annotate(average_rating=Avg("book__rating"))
+```
+
+This will return one result for each author in the database, annotated with their average book rating.
+
+However, the result will be slightly different if you use a `values()` clause:
+
+```pycon
+>>> Author.objects.values("name").annotate(average_rating=Avg("book__rating"))
+```
+
+In this example, the authors will be grouped by name, so you will only get an annotated result for each `unique` author name. This means if you have two authors with the same name, their results will be merged into a single result in the output of the query; the average will be computed as the average over the books written by both authors.
+
+#### Order of `annotate()` and `values()` clauses
+
+As with the `filter()` clause, the order in which `annotate()` and `values()` clauses are applied to a query is significant. If the `values()` clause precedes the `annotate()`, the annotation will be computed using the grouping described by the `values()` clause.
+
+However, if the `annotate()` clause precedes the `values()` clause, the annotations will be generated over the entire query set. In this case, the `values()` clause only constrains the fields that are generated on output.
+
+For example, if we reverse the order of the `values()` and `annotate()` clause from our previous example:
+
+```pycon
+>>> Author.objects.annotate(average_rating=Avg("book__rating")).values(
+...     "name", "average_rating"
+... )
+```
+
+This will now yield one unique result for each author; however, only the author’s name and the `average_rating` annotation will be returned in the output data.
+
+You should also note that `average_rating` has been explicitly included in the list of values to be returned. This is required because of the ordering of the `values()` and `annotate()` clause.
+
+If the `values()` clause precedes the `annotate()` clause, any annotations will be automatically added to the result set. However, if the `values()` clause is applied after the `annotate()` clause, you need to explicitly include the aggregate column.
+
+---
+#### Interaction with `order_by()`
+
+Fields that are mentioned in the `order_by()` part of a queryset are used when selecting the output data, even if they are not otherwise specified in the `values()` call. These extra fields are used to group “like” results together and they can make otherwise identical result rows appear to be separate. This shows up, particularly, when counting things.
+
+By way of example, suppose you have a model like this:
+
+```python
+from django.db import models
+
+
+class Item(models.Model):
+    name = models.CharField(max_length=10)
+    data = models.IntegerField()
+```
+
+If you want to count how many times each distinct `data` value appears in an ordered queryset, you might try this:
+
+```python
+items = Item.objects.order_by("name")
+# Warning: not quite correct!
+items.values("data").annotate(Count("id"))
+```
+
+…which will group the `Item` objects by their common `data` values and then count the number of `id` values in each group. Except that it won’t quite work. The ordering by `name` will also play a part in the grouping, so this query will group by distinct `(data, name)` pairs, which isn’t what you want. Instead, you should construct this queryset:
+
+```python
+items.values("data").annotate(Count("id")).order_by()
+```
+
+…clearing any ordering in the query. You could also order by, say, `data` without any harmful effects, since that is already playing a role in the query.
+
+This behavior is the same as that noted in the queryset documentation for `distinct()` and the general rule is the same: normally you won’t want extra columns playing a part in the result, so clear out the ordering, or at least make sure it’s restricted only to those fields you also select in a `values()` call.
+
+> **Note**
+> 
+> You might reasonably ask why Django doesn’t remove the extraneous columns for you. The main reason is consistency with distinct() and other places: Django never removes ordering constraints that you have specified (and we can’t change those other methods’ behavior, as that would violate our API stability policy).
+
+---
+### Aggregating annotations
+
+You can also generate an aggregate on the result of an annotation. When you define an `aggregate()` clause, the aggregates you provide can reference any alias defined as part of an `annotate()` clause in the query.
+
+For example, if you wanted to calculate the average number of authors per book you first annotate the set of books with the author count, then aggregate that author count, referencing the annotation field:
+
+```pycon
+>>> from django.db.models import Avg, Count
+>>> Book.objects.annotate(num_authors=Count("authors")).aggregate(Avg("num_authors"))
+{'num_authors__avg': 1.66}
+```
+
+---
+### Aggregating on empty querysets or groups
+
+When an aggregation is applied to an empty queryset or grouping, the result defaults to its default parameter, typically `None`. This behavior occurs because aggregate functions return `NULL` when the executed query returns no rows.
+
+You can specify a return value by providing the default argument for most aggregations. However, since `Count` does not support the default argument, it will always return `0` for empty querysets or groups.
+
+For example, assuming that no book contains web in its name, calculating the total price for this book set would return `None` since there are no matching rows to compute the `Sum` aggregation on:
+
+```pycon
+>>> from django.db.models import Sum
+>>> Book.objects.filter(name__contains="web").aggregate(Sum("price"))
+{"price__sum": None}
+```
+
+However, the default argument can be set when calling `Sum` to return a different default value if no books can be found:
+
+```pycon
+>>> Book.objects.filter(name__contains="web").aggregate(Sum("price", default=0))
+{"price__sum": Decimal("0")}
+```
+
+Under the hood, the default argument is implemented by wrapping the aggregate function with `Coalesce`.
+
+---
+<table>
+  <tr>
+    <td width=1000 align=left>
+    <a href="/topics/db/05-queries.md">◄ Making queries</a>
+    </td>
+    <td width=1000 align=right>
+    <a href="#">Search ►</a>
+    </td>
+  </tr>
+</table>
+
+---
