@@ -1329,19 +1329,19 @@ b.entry_set(manager="entries").is_published()
 
 In addition to the `QuerySet` methods defined in “Retrieving objects” above, the `ForeignKey` `Manager` has additional methods used to handle the set of related objects. A synopsis of each is below, and complete details can be found in the related objects reference.
 
-add(obj1, obj2, ...)
+`add(obj1, obj2, ...)`
 : Adds the specified model objects to the related object set.
 
-create(**kwargs)
+`create(**kwargs)`
 : Creates a new object, saves it and puts it in the related object set. Returns the newly created object.
 
-remove(obj1, obj2, ...)
+`remove(obj1, obj2, ...)`
 : Removes the specified model objects from the related object set.
 
-clear()
+`clear()`
 : Removes all objects from the related object set.
 
-set(objs)
+`set(objs)`
 : Replace the set of related objects.
 
 To assign the members of a related set, use the `set()` method with an iterable of object instances. For example, if `e1` and `e2` are `Entry` instances:
