@@ -90,7 +90,7 @@ See the `contrib.postgres` Full text search document for complete details.
     <a href="/topics/db/06-aggregation.md">◄ Aggregation</a>
     </td>
     <td width=1000 align=right>
-    <a href="#">Managers ►</a>
+    <a href="/topics/db/08-managers.md">Managers ►</a>
     </td>
   </tr>
 </table>
