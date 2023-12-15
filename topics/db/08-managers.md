@@ -365,7 +365,7 @@ This won’t be an issue for most custom managers. If you are just adding simple
     <a href="/topics/db/07-search.md">◄ Search</a>
     </td>
     <td width=1000 align=right>
-    <a href="#">Performing raw SQL queries ►</a>
+    <a href="/topics/db/09-sql.md">Performing raw SQL queries ►</a>
     </td>
   </tr>
 </table>
