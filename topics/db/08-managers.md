@@ -163,3 +163,211 @@ Therefore, you should not override `get_queryset()` to filter out any rows. If y
 
 ---
 ### Calling custom `QuerySet` methods from the manager
+
+While most methods from the standard `QuerySet` are accessible directly from the `Manager`, this is only the case for the extra methods defined on a custom `QuerySet` if you also implement them on the `Manager`:
+
+```python
+class PersonQuerySet(models.QuerySet):
+    def authors(self):
+        return self.filter(role="A")
+
+    def editors(self):
+        return self.filter(role="E")
+
+
+class PersonManager(models.Manager):
+    def get_queryset(self):
+        return PersonQuerySet(self.model, using=self._db)
+
+    def authors(self):
+        return self.get_queryset().authors()
+
+    def editors(self):
+        return self.get_queryset().editors()
+
+
+class Person(models.Model):
+    first_name = models.CharField(max_length=50)
+    last_name = models.CharField(max_length=50)
+    role = models.CharField(max_length=1, choices={"A": _("Author"), "E": _("Editor")})
+    people = PersonManager()
+```
+
+This example allows you to call both `authors()` and `editors()` directly from the manager `Person.people`.
+
+---
+### Creating a manager with `QuerySet` methods
+
+In lieu of the above approach which requires duplicating methods on both the `QuerySet` and the `Manager`, `QuerySet.as_manager()` can be used to create an instance of `Manager` with a copy of a custom `QuerySet`’s methods:
+
+```python
+class Person(models.Model):
+    ...
+    people = PersonQuerySet.as_manager()
+```
+
+The `Manager` instance created by `QuerySet.as_manager()` will be virtually identical to the `PersonManager` from the previous example.
+
+Not every `QuerySet` method makes sense at the `Manager` level; for instance we intentionally prevent the `QuerySet.delete()` method from being copied onto the `Manager` class.
+
+Methods are copied according to the following rules:
+
+- Public methods are copied by default.
+- Private methods (starting with an underscore) are not copied by default.
+- Methods with a `queryset_only` attribute set to `False` are always copied.
+- Methods with a `queryset_only` attribute set to `True` are never copied.
+
+For example:
+
+```python
+class CustomQuerySet(models.QuerySet):
+    # Available on both Manager and QuerySet.
+    def public_method(self):
+        return
+
+    # Available only on QuerySet.
+    def _private_method(self):
+        return
+
+    # Available only on QuerySet.
+    def opted_out_public_method(self):
+        return
+
+    opted_out_public_method.queryset_only = True
+
+    # Available on both Manager and QuerySet.
+    def _opted_in_private_method(self):
+        return
+
+    _opted_in_private_method.queryset_only = False
+```
+
+#### `from_queryset()`
+
+classmethod `from_queryset`(queryset_class)
+: For advanced usage you might want both a custom `Manager` and a custom `QuerySet`. You can do that by calling `Manager.from_queryset()` which returns a subclass of your base `Manager` with a copy of the custom `QuerySet` methods:
+
+```python
+class CustomManager(models.Manager):
+    def manager_only_method(self):
+        return
+
+
+class CustomQuerySet(models.QuerySet):
+    def manager_and_queryset_method(self):
+        return
+
+
+class MyModel(models.Model):
+    objects = CustomManager.from_queryset(CustomQuerySet)()
+```
+
+You may also store the generated class into a variable:
+
+```python
+MyManager = CustomManager.from_queryset(CustomQuerySet)
+
+
+class MyModel(models.Model):
+    objects = MyManager()
+```
+
+---
+### Custom managers and model inheritance
+
+Here’s how Django handles custom managers and model inheritance:
+
+1. Managers from base classes are always inherited by the child class, using Python’s normal name resolution order (names on the child class override all others; then come names on the first parent class, and so on).
+2. If no managers are declared on a model and/or its parents, Django automatically creates the `objects` manager.
+3. The default manager on a class is either the one chosen with `Meta.default_manager_name`, or the first manager declared on the model, or the default manager of the first parent model.
+
+These rules provide the necessary flexibility if you want to install a collection of custom managers on a group of models, via an abstract base class, but still customize the default manager. For example, suppose you have this base class:
+
+```python
+class AbstractBase(models.Model):
+    # ...
+    objects = CustomManager()
+
+    class Meta:
+        abstract = True
+```
+
+If you use this directly in a subclass, `objects` will be the default manager if you declare no managers in the base class:
+
+```python
+class ChildA(AbstractBase):
+    # ...
+    # This class has CustomManager as the default manager.
+    pass
+```
+
+If you want to inherit from `AbstractBase`, but provide a different default manager, you can provide the default manager on the child class:
+
+```python
+class ChildB(AbstractBase):
+    # ...
+    # An explicit default manager.
+    default_manager = OtherManager()
+```
+
+Here, `default_manager` is the default. The `objects` manager is still available, since it’s inherited, but isn’t used as the default.
+
+Finally for this example, suppose you want to add extra managers to the child class, but still use the default from `AbstractBase`. You can’t add the new manager directly in the child class, as that would override the default and you would have to also explicitly include all the managers from the abstract base class. The solution is to put the extra managers in another base class and introduce it into the inheritance hierarchy *after* the defaults:
+
+```python
+class ExtraManager(models.Model):
+    extra_manager = OtherManager()
+
+    class Meta:
+        abstract = True
+
+
+class ChildC(AbstractBase, ExtraManager):
+    # ...
+    # Default manager is CustomManager, but OtherManager is
+    # also available via the "extra_manager" attribute.
+    pass
+```
+
+Note that while you can *define* a custom manager on the abstract model, you can’t *invoke* any methods using the abstract model. That is:
+
+```python
+ClassA.objects.do_something()
+```
+
+is legal, but:
+
+```python
+AbstractBase.objects.do_something()
+```
+
+will raise an exception. This is because managers are intended to encapsulate logic for managing collections of objects. Since you can’t have a collection of abstract objects, it doesn’t make sense to be managing them. If you have functionality that applies to the abstract model, you should put that functionality in a `staticmethod` or `classmethod` on the abstract model.
+
+---
+### Implementation concerns
+
+Whatever features you add to your custom `Manager`, it must be possible to make a shallow copy of a `Manager` instance; i.e., the following code must work:
+
+```pycon
+>>> import copy
+>>> manager = MyManager()
+>>> my_copy = copy.copy(manager)
+```
+
+Django makes shallow copies of manager objects during certain queries; if your Manager cannot be copied, those queries will fail.
+
+This won’t be an issue for most custom managers. If you are just adding simple methods to your `Manager`, it is unlikely that you will inadvertently make instances of your `Manager` uncopyable. However, if you’re overriding `__getattr__` or some other private method of your `Manager` object that controls object state, you should ensure that you don’t affect the ability of your `Manager` to be copied.
+
+---
+<table>
+  <tr>
+    <td width=1000 align=left>
+    <a href="/topics/db/07-search.md">◄ Search</a>
+    </td>
+    <td width=1000 align=right>
+    <a href="#">Performing raw SQL queries ►</a>
+    </td>
+  </tr>
+</table>
+
+---
