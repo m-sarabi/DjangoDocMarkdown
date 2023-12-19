@@ -339,7 +339,7 @@ with connection.cursor() as cursor:
     <a href="/topics/db/08-managers.md">◄ Managers</a>
     </td>
     <td width=1000 align=right>
-    <a href="#">Database transactions ►</a>
+    <a href="/topics/db/10-transactions.md">Database transactions ►</a>
     </td>
   </tr>
 </table>
