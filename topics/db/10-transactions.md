@@ -227,4 +227,251 @@ It’s sometimes useful to register callbacks that can fail. Passing `robust=Tru
 You can use `TestCase.captureOnCommitCallbacks()` to test callbacks registered with `on_commit()`.
 
 > **Changed in Django 4.2:**
+> The `robust` argument was added.
+
+### Savepoints
+
+Savepoints (i.e. nested `atomic()` blocks) are handled correctly. That is, an `on_commit()` callable registered after a savepoint (in a nested `atomic()` block) will be called after the outer transaction is committed, but not if a rollback to that savepoint or any previous savepoint occurred during the transaction:
+
+```python
+with transaction.atomic():  # Outer atomic, start a new transaction
+    transaction.on_commit(foo)
+
+    with transaction.atomic():  # Inner atomic block, create a savepoint
+        transaction.on_commit(bar)
+
+# foo() and then bar() will be called when leaving the outermost block
+```
+
+On the other hand, when a savepoint is rolled back (due to an exception being raised), the inner callable will not be called:
+
+```python
+with transaction.atomic():  # Outer atomic, start a new transaction
+    transaction.on_commit(foo)
+
+    try:
+        with transaction.atomic():  # Inner atomic block, create a savepoint
+            transaction.on_commit(bar)
+            raise SomeError()  # Raising an exception - abort the savepoint
+    except SomeError:
+        pass
+
+# foo() will be called, but not bar()
+```
+
+---
+### Order of execution
+
+On-commit functions for a given transaction are executed in the order they were registered.
+
+---
+### Exception handling
+
+If one on-commit function registered with `robust=False` within a given transaction raises an uncaught exception, no later registered functions in that same transaction will run. This is the same behavior as if you’d executed the functions sequentially yourself without `on_commit()`.
+
+> **Changed in Django 4.2:**
 > The robust argument was added.
+
+---
+### Timing of execution
+
+Your callbacks are executed *after* a successful commit, so a failure in a callback will not cause the transaction to roll back. They are executed conditionally upon the success of the transaction, but they are not *part* of the transaction. For the intended use cases (mail notifications, background tasks, etc.), this should be fine. If it’s not (if your follow-up action is so critical that its failure should mean the failure of the transaction itself), then you don’t want to use the `on_commit()` hook. Instead, you may want two-phase commit such as the psycopg Two-Phase Commit protocol support and the optional Two-Phase Commit Extensions in the Python DB-API specification.
+
+Callbacks are not run until autocommit is restored on the connection following the commit (because otherwise any queries done in a callback would open an implicit transaction, preventing the connection from going back into autocommit mode).
+
+When in autocommit mode and outside of an `atomic()` block, the function will run immediately, not on commit.
+
+On-commit functions only work with autocommit mode and the `atomic()` (or `ATOMIC_REQUESTS`) transaction API. Calling `on_commit()` when autocommit is disabled and you are not within an atomic block will result in an error.
+
+---
+### Use in tests
+
+Django’s `TestCase` class wraps each test in a transaction and rolls back that transaction after each test, in order to provide test isolation. This means that no transaction is ever actually committed, thus your `on_commit()` callbacks will never be run.
+
+You can overcome this limitation by using `TestCase.captureOnCommitCallbacks()`. This captures your `on_commit()` callbacks in a list, allowing you to make assertions on them, or emulate the transaction committing by calling them.
+
+Another way to overcome the limitation is to use `TransactionTestCase` instead of `TestCase`. This will mean your transactions are committed, and the callbacks will run. However `TransactionTestCase` flushes the database between tests, which is significantly slower than `TestCase`'s isolation.
+
+---
+## Why no rollback hook?
+
+A rollback hook is harder to implement robustly than a commit hook, since a variety of things can cause an implicit rollback.
+
+For instance, if your database connection is dropped because your process was killed without a chance to shut down gracefully, your rollback hook will never run.
+
+But there is a solution: instead of doing something during the atomic block (transaction) and then undoing it if the transaction fails, use `on_commit()` to delay doing it in the first place until after the transaction succeeds. It’s a lot easier to undo something you never did in the first place!
+
+---
+## Low-level APIs
+
+> **Warning**
+> 
+> Always prefer `atomic()` if possible at all. It accounts for the idiosyncrasies of each database and prevents invalid operations.
+> 
+> The low level APIs are only useful if you’re implementing your own transaction management.
+
+### Autocommit
+
+Django provides an API in the `django.db.transaction` module to manage the autocommit state of each database connection.
+
+get_autocommit(using=None)<br>set_autocommit(autocommit, using=None)
+: These functions take a `using` argument which should be the name of a database. If it isn’t provided, Django uses the `"default"` database.
+
+Autocommit is initially turned on. If you turn it off, it’s your responsibility to restore it.
+
+Once you turn autocommit off, you get the default behavior of your database adapter, and Django won’t help you. Although that behavior is specified in PEP 249, implementations of adapters aren’t always consistent with one another. Review the documentation of the adapter you’re using carefully.
+
+You must ensure that no transaction is active, usually by issuing a `commit()` or a `rollback()`, before turning autocommit back on.
+
+Django will refuse to turn autocommit off when an `atomic()` block is active, because that would break atomicity.
+
+---
+### Transactions
+
+A transaction is an atomic set of database queries. Even if your program crashes, the database guarantees that either all the changes will be applied, or none of them.
+
+Django doesn’t provide an API to start a transaction. The expected way to start a transaction is to disable autocommit with `set_autocommit()`.
+
+Once you’re in a transaction, you can choose either to apply the changes you’ve performed until this point with `commit()`, or to cancel them with `rollback()`. These functions are defined in `django.db.transaction`.
+
+commit(using=None)<br>rollback(using=None)
+: These functions take a `using` argument which should be the name of a database. If it isn’t provided, Django uses the `"default"` database.
+
+Django will refuse to commit or to rollback when an `atomic()` block is active, because that would break atomicity.
+
+---
+### Savepoints
+
+A savepoint is a marker within a transaction that enables you to roll back part of a transaction, rather than the full transaction. Savepoints are available with the SQLite, PostgreSQL, Oracle, and MySQL (when using the InnoDB storage engine) backends. Other backends provide the savepoint functions, but they’re empty operations – they don’t actually do anything.
+
+Savepoints aren’t especially useful if you are using autocommit, the default behavior of Django. However, once you open a transaction with `atomic()`, you build up a series of database operations awaiting a commit or rollback. If you issue a rollback, the entire transaction is rolled back. Savepoints provide the ability to perform a fine-grained rollback, rather than the full rollback that would be performed by `transaction.rollback()`.
+
+When the `atomic()` decorator is nested, it creates a savepoint to allow partial commit or rollback. You’re strongly encouraged to use `atomic()` rather than the functions described below, but they’re still part of the public API, and there’s no plan to deprecate them.
+
+Each of these functions takes a `using` argument which should be the name of a database for which the behavior applies. If no `using` argument is provided then the `"default" `database is used.
+
+Savepoints are controlled by three functions in `django.db.transaction`:
+
+`savepoint`(using=None)
+: Creates a new savepoint. This marks a point in the transaction that is known to be in a “good” state. Returns the savepoint ID (`sid`).
+
+`savepoint_commit`(sid, using=None)
+: Releases savepoint `sid`. The changes performed since the savepoint was created become part of the transaction.
+
+savepoint_rollback(sid, using=None)
+: Rolls back the transaction to savepoint `sid`.
+
+These functions do nothing if savepoints aren’t supported or if the database is in autocommit mode.
+
+In addition, there’s a utility function:
+
+`clean_savepoints`(using=None)
+: Resets the counter used to generate unique savepoint IDs.
+
+The following example demonstrates the use of savepoints:
+
+```python
+from django.db import transaction
+
+
+# open a transaction
+@transaction.atomic
+def viewfunc(request):
+    a.save()
+    # transaction now contains a.save()
+
+    sid = transaction.savepoint()
+
+    b.save()
+    # transaction now contains a.save() and b.save()
+
+    if want_to_keep_b:
+        transaction.savepoint_commit(sid)
+        # open transaction still contains a.save() and b.save()
+    else:
+        transaction.savepoint_rollback(sid)
+        # open transaction now contains only a.save()
+```
+
+Savepoints may be used to recover from a database error by performing a partial rollback. If you’re doing this inside an `atomic()` block, the entire block will still be rolled back, because it doesn’t know you’ve handled the situation at a lower level! To prevent this, you can control the rollback behavior with the following functions.
+
+`get_rollback`(using=None)<br>`set_rollback`(rollback, using=None)
+: Setting the rollback flag to `True` forces a rollback when exiting the innermost atomic block. This may be useful to trigger a rollback without raising an exception.
+
+Setting it to `False` prevents such a rollback. Before doing that, make sure you’ve rolled back the transaction to a known-good savepoint within the current atomic block! Otherwise you’re breaking atomicity and data corruption may occur.
+
+---
+## Database-specific notes
+
+### Savepoints in SQLite
+
+
+While SQLite supports savepoints, a flaw in the design of the `sqlite3` module makes them hardly usable.
+
+When autocommit is enabled, savepoints don’t make sense. When it’s disabled, `sqlite3` commits implicitly before savepoint statements. (In fact, it commits before any statement other than `SELECT`, `INSERT`, `UPDATE`, `DELETE` and `REPLACE`.) This bug has two consequences:
+
+- The low level APIs for savepoints are only usable inside a transaction i.e. inside an `atomic()` block.
+- It’s impossible to use `atomic()` when autocommit is turned off.
+
+---
+### Transactions in MySQL
+
+If you’re using MySQL, your tables may or may not support transactions; it depends on your MySQL version and the table types you’re using. (By “table types,” we mean something like “InnoDB” or “MyISAM”.) MySQL transaction peculiarities are outside the scope of this article, but the MySQL site has information on MySQL transactions.
+
+If your MySQL setup does *not* support transactions, then Django will always function in autocommit mode: statements will be executed and committed as soon as they’re called. If your MySQL setup *does* support transactions, Django will handle transactions as explained in this document.
+
+---
+### Handling exceptions within PostgreSQL transactions
+
+> **Note**
+>
+> This section is relevant only if you’re implementing your own transaction management. This problem cannot occur in Django’s default mode and `atomic()` handles it automatically.
+
+Inside a transaction, when a call to a PostgreSQL cursor raises an exception (typically `IntegrityError`), all subsequent SQL in the same transaction will fail with the error “current transaction is aborted, queries ignored until end of transaction block”. While the basic use of `save()` is unlikely to raise an exception in PostgreSQL, there are more advanced usage patterns which might, such as saving objects with unique fields, saving using the `force_insert`/`force_update` flag, or invoking custom SQL.
+
+There are several ways to recover from this sort of error.
+
+#### Transaction rollback
+
+The first option is to roll back the entire transaction. For example:
+
+```python
+a.save()  # Succeeds, but may be undone by transaction rollback
+try:
+    b.save()  # Could throw exception
+except IntegrityError:
+    transaction.rollback()
+c.save()  # Succeeds, but a.save() may have been undone
+```
+
+Calling `transaction.rollback()` rolls back the entire transaction. Any uncommitted database operations will be lost. In this example, the changes made by `a.save()` would be lost, even though that operation raised no error itself.
+
+---
+#### Savepoint rollback
+
+You can use savepoints to control the extent of a rollback. Before performing a database operation that could fail, you can set or update the savepoint; that way, if the operation fails, you can roll back the single offending operation, rather than the entire transaction. For example:
+
+```python
+a.save()  # Succeeds, and never undone by savepoint rollback
+sid = transaction.savepoint()
+try:
+    b.save()  # Could throw exception
+    transaction.savepoint_commit(sid)
+except IntegrityError:
+    transaction.savepoint_rollback(sid)
+c.save()  # Succeeds, and a.save() is never undone
+```
+
+In this example, `a.save()` will not be undone in the case where `b.save()` raises an exception.
+
+---
+<table>
+  <tr>
+    <td width=1000 align=left>
+    <a href="/topics/db/09-sql.md">◄ Performing raw SQL queries</a>
+    </td>
+    <td width=1000 align=right>
+    <a href="#">Multiple databases ►</a>
+    </td>
+  </tr>
+</table>
