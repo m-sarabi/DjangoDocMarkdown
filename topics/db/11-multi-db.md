@@ -125,3 +125,173 @@ The hints received by the database router can be used to decide which database s
 At present, the only hint that will be provided is `instance`, an object instance that is related to the read or write operation that is underway. This might be the instance that is being saved, or it might be an instance that is being added in a many-to-many relation. In some cases, no instance hint will be provided at all. The router checks for the existence of an instance hint, and determine if that hint should be used to alter routing behavior.
 
 ---
+### Using routers
+
+Database routers are installed using the `DATABASE_ROUTERS` setting. This setting defines a list of class names, each specifying a router that should be used by the base router (`django.db.router`).
+
+The base router is used by Django’s database operations to allocate database usage. Whenever a query needs to know which database to use, it calls the base router, providing a model and a hint (if available). The base router tries each router class in turn until one returns a database suggestion. If no routers return a suggestion, the base router tries the current `instance._state.db` of the hint instance. If no hint instance was provided, or `instance._state.db` is `None`, the base router will allocate the `default` database.
+
+---
+### An example
+
+> **Example purposes only!**
+> 
+> This example is intended as a demonstration of how the router infrastructure can be used to alter database usage. It intentionally ignores some complex issues in order to demonstrate how routers are used.
+> 
+> This example won’t work if any of the models in `myapp` contain relationships to models outside of the `other` database. Cross-database relationships introduce referential integrity problems that Django can’t currently handle.
+> 
+> The primary/replica (referred to as master/slave by some databases) configuration described is also flawed – it doesn’t provide any solution for handling replication lag (i.e., query inconsistencies introduced because of the time taken for a write to propagate to the replicas). It also doesn’t consider the interaction of transactions with the database utilization strategy.
+
+So - what does this mean in practice? Let’s consider another sample configuration. This one will have several databases: one for the `auth` application, and all other apps using a primary/replica setup with two read replicas. Here are the settings specifying these databases:
+
+```python
+DATABASES = {
+    "default": {},
+    "auth_db": {
+        "NAME": "auth_db_name",
+        "ENGINE": "django.db.backends.mysql",
+        "USER": "mysql_user",
+        "PASSWORD": "swordfish",
+    },
+    "primary": {
+        "NAME": "primary_name",
+        "ENGINE": "django.db.backends.mysql",
+        "USER": "mysql_user",
+        "PASSWORD": "spam",
+    },
+    "replica1": {
+        "NAME": "replica1_name",
+        "ENGINE": "django.db.backends.mysql",
+        "USER": "mysql_user",
+        "PASSWORD": "eggs",
+    },
+    "replica2": {
+        "NAME": "replica2_name",
+        "ENGINE": "django.db.backends.mysql",
+        "USER": "mysql_user",
+        "PASSWORD": "bacon",
+    },
+}
+```
+
+Now we’ll need to handle routing. First we want a router that knows to send queries for the `auth` and `contenttypes` apps to `auth_db` (`auth` models are linked to `ContentType`, so they must be stored in the same database):
+
+```python
+class AuthRouter:
+    """
+    A router to control all database operations on models in the
+    auth and contenttypes applications.
+    """
+
+    route_app_labels = {"auth", "contenttypes"}
+
+    def db_for_read(self, model, **hints):
+        """
+        Attempts to read auth and contenttypes models go to auth_db.
+        """
+        if model._meta.app_label in self.route_app_labels:
+            return "auth_db"
+        return None
+
+    def db_for_write(self, model, **hints):
+        """
+        Attempts to write auth and contenttypes models go to auth_db.
+        """
+        if model._meta.app_label in self.route_app_labels:
+            return "auth_db"
+        return None
+
+    def allow_relation(self, obj1, obj2, **hints):
+        """
+        Allow relations if a model in the auth or contenttypes apps is
+        involved.
+        """
+        if (
+            obj1._meta.app_label in self.route_app_labels
+            or obj2._meta.app_label in self.route_app_labels
+        ):
+            return True
+        return None
+
+    def allow_migrate(self, db, app_label, model_name=None, **hints):
+        """
+        Make sure the auth and contenttypes apps only appear in the
+        'auth_db' database.
+        """
+        if app_label in self.route_app_labels:
+            return db == "auth_db"
+        return None
+```
+
+And we also want a router that sends all other apps to the primary/replica configuration, and randomly chooses a replica to read from:
+
+```python
+import random
+
+
+class PrimaryReplicaRouter:
+    def db_for_read(self, model, **hints):
+        """
+        Reads go to a randomly-chosen replica.
+        """
+        return random.choice(["replica1", "replica2"])
+
+    def db_for_write(self, model, **hints):
+        """
+        Writes always go to primary.
+        """
+        return "primary"
+
+    def allow_relation(self, obj1, obj2, **hints):
+        """
+        Relations between objects are allowed if both objects are
+        in the primary/replica pool.
+        """
+        db_set = {"primary", "replica1", "replica2"}
+        if obj1._state.db in db_set and obj2._state.db in db_set:
+            return True
+        return None
+
+    def allow_migrate(self, db, app_label, model_name=None, **hints):
+        """
+        All non-auth models end up in this pool.
+        """
+        return True
+```
+
+Finally, in the settings file, we add the following (substituting `path.to.` with the actual Python path to the module(s) where the routers are defined):
+
+```python
+DATABASE_ROUTERS = ["path.to.AuthRouter", "path.to.PrimaryReplicaRouter"]
+```
+
+The order in which routers are processed is significant. Routers will be queried in the order they are listed in the `DATABASE_ROUTERS` setting. In this example, the `AuthRouter` is processed before the `PrimaryReplicaRouter`, and as a result, decisions concerning the models in `auth` are processed before any other decision is made. If the `DATABASE_ROUTERS` setting listed the two routers in the other order, `PrimaryReplicaRouter.allow_migrate()` would be processed first. The catch-all nature of the PrimaryReplicaRouter implementation would mean that all models would be available on all databases.
+
+With this setup installed, and all databases migrated as per Synchronizing your databases, lets run some Django code:
+
+```pycon
+>>> # This retrieval will be performed on the 'auth_db' database
+>>> fred = User.objects.get(username="fred")
+>>> fred.first_name = "Frederick"
+
+>>> # This save will also be directed to 'auth_db'
+>>> fred.save()
+
+>>> # These retrieval will be randomly allocated to a replica database
+>>> dna = Person.objects.get(name="Douglas Adams")
+
+>>> # A new object has no database allocation when created
+>>> mh = Book(title="Mostly Harmless")
+
+>>> # This assignment will consult the router, and set mh onto
+>>> # the same database as the author object
+>>> mh.author = dna
+
+>>> # This save will force the 'mh' instance onto the primary database...
+>>> mh.save()
+
+>>> # ... but if we re-retrieve the object, it will come back on a replica
+>>> mh = Book.objects.get(title="Mostly Harmless")
+```
+
+This example defined a router to handle interaction with models from the `auth` app, and other routers to handle interaction with all other apps. If you left your `default` database empty and don’t want to define a catch-all database router to handle all apps not otherwise specified, your routers must handle the names of all apps in `INSTALLED_APPS` before you migrate. See Behavior of contrib apps for information about contrib apps that must be together in one database.
